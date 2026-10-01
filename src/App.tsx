@@ -81,7 +81,7 @@ export function App() {
             </p>
             {config === undefined && <p className="muted">Loading…</p>}
             {config === null && (
-              <p className="muted">No config.json in this channel: it was deployed with copy_config off.</p>
+              <p className="muted">No config.json in this channel: development had none when the channel was created.</p>
             )}
             {config && <pre>{config}</pre>}
           </article>
