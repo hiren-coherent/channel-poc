@@ -3,7 +3,7 @@ import { type ChannelEntry, fetchRegistry } from './channel';
 import { ChannelSwitcher } from './ChannelSwitcher';
 
 // Change this on a branch, deploy the branch to a channel, then switch to it.
-const HEADLINE = 'Hello from the channel POC';
+const HEADLINE = 'Hello from feature/SP-101-hello';
 
 const BUILD = {
   channel: import.meta.env.VITE_CHANNEL ?? 'local',
