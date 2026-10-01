@@ -12,6 +12,8 @@ name: Channel Management
 #                   blank it updates the channel already registered to that branch, or
 #                   creates one named from the branch (its Jira key, else its last path
 #                   segment). A channel registered to another branch is never taken over.
+#                   A new channel gets a copy of development's config.json; an update
+#                   keeps the channel's own.
 #   Delete branch → deletes the channels registered to it (the `delete` trigger below).
 
 run-name: >-
@@ -28,11 +30,6 @@ on:
           branch (feat/SP-12345-foo → SP-12345). Otherwise 1-20 chars of [A-Za-z0-9_-]
         required: false
         type: string
-      copy_config:
-        description: 'Copy config.json from the development channel'
-        required: false
-        type: boolean
-        default: true
   # GitHub runs `delete` workflows from the default branch only, so this trigger
   # takes effect once this file is on main.
   delete:
@@ -170,9 +167,7 @@ jobs:
         run: VITE_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" pnpm build
 
       - name: Publish channel and register it in channel.json
-        env:
-          COPY_CONFIG: ${{ inputs.copy_config }}
-        run: bash scripts/pages.sh deploy "$CHANNEL" "$BRANCH" dist "$COPY_CONFIG"
+        run: bash scripts/pages.sh deploy "$CHANNEL" "$BRANCH" dist
 
   delete-channel:
     name: Delete channel

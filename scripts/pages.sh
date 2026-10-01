@@ -7,7 +7,7 @@
 #
 #   pages.sh read <channel-registry.js args>         find/owner on the published registry
 #   pages.sh deploy-default <dist>                   main → the default channel, plus the router
-#   pages.sh deploy <channel> <branch> <dist> <copy_config: true|false>
+#   pages.sh deploy <channel> <branch> <dist>
 #   pages.sh delete <channel>...
 #
 # Each change is one commit pushed to gh-pages. If the push is rejected because another
@@ -107,15 +107,17 @@ deploy_default() { # <dist>
 
 # A channel belongs to the branch that first deployed it. The check runs on every
 # attempt, against the tip being pushed onto, so two runs can't both claim one channel.
-deploy_channel() { # <channel> <branch> <dist> <copy_config>
-  local channel="$1" branch="$2" dist="$3" copy_config="$4" owner
+deploy_channel() { # <channel> <branch> <dist>
+  local channel="$1" branch="$2" dist="$3" owner new_channel=false
   owner=$(node "$REGISTRY_JS" --file=channel.json --op=owner --name="$channel")
   if [[ -n "$owner" && "$owner" != "$branch" ]]; then
     echo "::error::Channel '$channel' belongs to branch '$owner'. Set another channel_name." >&2
     exit 1
   fi
+  [[ -d "$channel" ]] || new_channel=true
   replace_folder "$channel" "$dist"
-  if [[ "$copy_config" == true && -f "$DEFAULT_CHANNEL/config.json" ]]; then
+  # A new channel starts from the development config; an update keeps the channel's own.
+  if [[ "$new_channel" == true && -f "$DEFAULT_CHANNEL/config.json" ]]; then
     cp "$DEFAULT_CHANNEL/config.json" "$channel/config.json"
   fi
   node "$REGISTRY_JS" --file=channel.json --op=add --name="$channel" --branch="$branch"
@@ -140,7 +142,7 @@ case "$command" in
     ;;
   deploy)
     valid_channel "$1"
-    publish "Deploy channel $1 from $2" deploy_channel "$1" "$2" "$(cd "$3" && pwd)" "$4"
+    publish "Deploy channel $1 from $2" deploy_channel "$1" "$2" "$(cd "$3" && pwd)"
     ;;
   delete)
     for channel in "$@"; do valid_channel "$channel"; done
