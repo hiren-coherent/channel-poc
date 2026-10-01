@@ -1,9 +1,5 @@
 [
   {
-    "channel_name": "SP-101",
-    "branch_name": "feature/SP-101-hello"
-  },
-  {
     "channel_name": "SP-102",
     "branch_name": "feature/SP-102-new-headline"
   }

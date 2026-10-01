@@ -1,5 +1,0 @@
-{
-  "environmentName": "development",
-  "apiUrl": "https://api.example.com",
-  "message": "Seeded once by deploy-development.yml. Edit development/config.json on the gh-pages branch, then create a channel with copy_config on to see it copied."
-}
