@@ -7,7 +7,7 @@
 #
 #   pages.sh read <channel-registry.js args>         find/owner on the published registry
 #   pages.sh deploy-default <dist>                   main → the default channel, plus the router
-#   pages.sh deploy <create|update> <channel> <branch> <dist> <copy_config: true|false>
+#   pages.sh deploy <channel> <branch> <dist> <copy_config: true|false>
 #   pages.sh delete <channel>...
 #
 # Each change is one commit pushed to gh-pages. If the push is rejected because another
@@ -105,17 +105,14 @@ deploy_default() { # <dist>
   cp -r "$ROOT/pages-root/." .
 }
 
-# The ownership check runs on every attempt, against the tip being pushed onto, so two
-# runs can't both claim one channel.
-deploy_channel() { # <create|update> <channel> <branch> <dist> <copy_config>
-  local mode="$1" channel="$2" branch="$3" dist="$4" copy_config="$5" owner
+# A channel belongs to the branch that first deployed it. The check runs on every
+# attempt, against the tip being pushed onto, so two runs can't both claim one channel.
+deploy_channel() { # <channel> <branch> <dist> <copy_config>
+  local channel="$1" branch="$2" dist="$3" copy_config="$4" owner
   owner=$(node "$REGISTRY_JS" --file=channel.json --op=owner --name="$channel")
   if [[ -n "$owner" && "$owner" != "$branch" ]]; then
-    if [[ "$mode" == create ]]; then
-      echo "::error::Channel '$channel' is deployed from branch '$owner'. Set another channel_name, or run update to take it over." >&2
-      exit 1
-    fi
-    echo "::warning::Channel '$channel' moves from branch '$owner' to '$branch'." >&2
+    echo "::error::Channel '$channel' belongs to branch '$owner'. Set another channel_name." >&2
+    exit 1
   fi
   replace_folder "$channel" "$dist"
   if [[ "$copy_config" == true && -f "$DEFAULT_CHANNEL/config.json" ]]; then
@@ -142,12 +139,8 @@ case "$command" in
     publish "Deploy $DEFAULT_CHANNEL from ${GITHUB_SHA:-local}" deploy_default "$(cd "$1" && pwd)"
     ;;
   deploy)
-    if [[ "${1:-}" != create && "${1:-}" != update ]]; then
-      echo "deploy mode must be create or update" >&2
-      exit 2
-    fi
-    valid_channel "$2"
-    publish "$1 channel $2 from $3" deploy_channel "$1" "$2" "$3" "$(cd "$4" && pwd)" "$5"
+    valid_channel "$1"
+    publish "Deploy channel $1 from $2" deploy_channel "$1" "$2" "$(cd "$3" && pwd)" "$4"
     ;;
   delete)
     for channel in "$@"; do valid_channel "$channel"; done
