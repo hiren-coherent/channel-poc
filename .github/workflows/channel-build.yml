@@ -1,42 +1,35 @@
 name: Channel Management
 
-# Same flow as platform-ui's channel-build.yml, with the gh-pages branch standing in
+# Same idea as platform-ui's channel-build.yml, with the gh-pages branch standing in
 # for the S3 bucket (see scripts/pages.sh). A "channel" is a folder on gh-pages; the
 # router page at the site root sends you to the folder named by the `channel` cookie.
 #
 # Registry: channel.json at the site root records which branch each channel was
 # deployed from — [{ "channel_name": "SP-12345", "branch_name": "feat/SP-12345-foo" }].
-# The channel switcher reads it, and deleting a branch deletes the channels registered
-# to it (the `delete` trigger below).
+# The channel switcher reads it.
 #
-# Manual runs use the branch picked in "Use workflow from". A blank channel_name means:
-#   create        → derived from that branch (its Jira key, else its last path segment)
-#   update/delete → the channel(s) already registered to that branch
+#   Run workflow  → deploys the branch picked in "Use workflow from". With channel_name
+#                   blank it updates the channel already registered to that branch, or
+#                   creates one named from the branch (its Jira key, else its last path
+#                   segment). A channel registered to another branch is never taken over.
+#   Delete branch → deletes the channels registered to it (the `delete` trigger below).
 
 run-name: >-
   ${{ github.event_name == 'delete'
     && format('Delete channels of deleted branch {0}', github.event.ref)
-    || format('{0} channel {1} from {2}', inputs.action, inputs.channel_name || '(auto)', github.ref_name) }}
+    || format('Deploy {0} to channel {1}', github.ref_name, inputs.channel_name || '(auto)') }}
 
 on:
   workflow_dispatch:
     inputs:
-      action:
-        description: 'Action to perform'
-        required: true
-        type: choice
-        options:
-          - create
-          - update
-          - delete
       channel_name:
         description: >-
-          Channel name. Leave blank: create → derived from the branch (feat/SP-12345-foo → SP-12345);
-          update/delete → the channel registered to the branch. Otherwise 1-20 chars of [A-Za-z0-9_-]
+          Channel name. Leave blank to use this branch's channel, or to name a new one from the
+          branch (feat/SP-12345-foo → SP-12345). Otherwise 1-20 chars of [A-Za-z0-9_-]
         required: false
         type: string
       copy_config:
-        description: 'Copy config.json from the development channel (create/update only)'
+        description: 'Copy config.json from the development channel'
         required: false
         type: boolean
         default: true
@@ -76,40 +69,42 @@ jobs:
           # Passed through env, never ${{ }} inside the script: branch names and
           # inputs are user-controlled and would otherwise be shell-injected.
           EVENT: ${{ github.event_name }}
-          ACTION: ${{ inputs.action }}
           CHANNEL: ${{ inputs.channel_name }}
           # On `delete` the run is on the default branch; the deleted branch is event.ref.
           BRANCH: ${{ github.event_name == 'delete' && github.event.ref || github.ref_name }}
         run: |
           set -euo pipefail
           set -f # channel lists are word-split below; never glob them
-          if [[ "$EVENT" == delete ]]; then ACTION=delete; fi
+          registry() { bash scripts/pages.sh read "$@"; }
 
-          if [[ -n "$CHANNEL" ]]; then
-            CHANNELS="$CHANNEL"
-          elif [[ "$ACTION" == create ]]; then
-            if [[ "$BRANCH" =~ [A-Z][A-Z0-9]+-[0-9]+ ]]; then
-              CHANNELS="${BASH_REMATCH[0]}"
-            else
-              CHANNELS="${BRANCH##*/}"
+          ACTION=deploy # becomes create or update once the channel's owner is known
+          if [[ "$EVENT" == delete ]]; then
+            ACTION=delete
+            CHANNELS=$(registry --op=find --branch="$BRANCH")
+            if [[ -z "$CHANNELS" ]]; then
+              echo "No channel is registered to deleted branch '$BRANCH'; nothing to delete."
             fi
-            CHANNELS="${CHANNELS//[^A-Za-z0-9_-]/-}"
-            CHANNELS="${CHANNELS:0:20}"
           else
-            CHANNELS=$(bash scripts/pages.sh read --op=find --branch="$BRANCH")
-          fi
-
-          COUNT=$(wc -w <<< "$CHANNELS")
-          if [[ "$COUNT" -eq 0 ]]; then
-            if [[ "$EVENT" != delete ]]; then
-              echo "::error::No channel is registered to branch '$BRANCH'. Set channel_name, or use create for a new channel."
+            if [[ -n "$CHANNEL" ]]; then
+              CHANNELS="$CHANNEL"
+            else
+              CHANNELS=$(registry --op=find --branch="$BRANCH")
+              if [[ -z "$CHANNELS" ]]; then
+                if [[ "$BRANCH" =~ [A-Z][A-Z0-9]+-[0-9]+ ]]; then
+                  CHANNELS="${BASH_REMATCH[0]}"
+                else
+                  CHANNELS="${BRANCH##*/}"
+                fi
+                CHANNELS="${CHANNELS//[^A-Za-z0-9_-]/-}"
+                CHANNELS="${CHANNELS:0:20}"
+              fi
+            fi
+            if [[ $(wc -w <<< "$CHANNELS") -ne 1 ]]; then
+              echo "::error::Expected one channel but got: $(echo $CHANNELS). Set channel_name to a single channel."
               exit 1
             fi
-            echo "No channel is registered to deleted branch '$BRANCH'; nothing to delete."
-          elif [[ "$COUNT" -gt 1 && ( -n "$CHANNEL" || "$ACTION" != delete ) ]]; then
-            echo "::error::Expected one channel but got: $(echo $CHANNELS). Set channel_name to a single channel."
-            exit 1
           fi
+
           JSON=""
           for C in $CHANNELS; do
             if [[ ! "$C" =~ ^[A-Za-z0-9_-]{1,20}$ ]]; then
@@ -122,6 +117,17 @@ jobs:
             fi
             JSON+="\"$C\"," # safe to quote raw: the regex above admits no JSON-special characters
           done
+
+          # Fail before the build rather than after it; pages.sh repeats this check
+          # against the tip it pushes onto, which is the one that counts.
+          if [[ "$ACTION" != delete ]]; then
+            OWNER=$(registry --op=owner --name="$CHANNELS")
+            if [[ -n "$OWNER" && "$OWNER" != "$BRANCH" ]]; then
+              echo "::error::Channel '$CHANNELS' belongs to branch '$OWNER'. Set another channel_name."
+              exit 1
+            fi
+            ACTION=$([[ "$OWNER" == "$BRANCH" ]] && echo update || echo create)
+          fi
 
           echo "$ACTION: [$(echo $CHANNELS)] for branch $BRANCH" | tee -a "$GITHUB_STEP_SUMMARY"
           {
@@ -138,7 +144,6 @@ jobs:
     permissions:
       contents: write
     env:
-      ACTION: ${{ needs.resolve.outputs.action }}
       BRANCH: ${{ needs.resolve.outputs.branch }}
       CHANNEL: ${{ fromJSON(needs.resolve.outputs.channels)[0] }}
     steps:
@@ -167,7 +172,7 @@ jobs:
       - name: Publish channel and register it in channel.json
         env:
           COPY_CONFIG: ${{ inputs.copy_config }}
-        run: bash scripts/pages.sh deploy "$ACTION" "$CHANNEL" "$BRANCH" dist "$COPY_CONFIG"
+        run: bash scripts/pages.sh deploy "$CHANNEL" "$BRANCH" dist "$COPY_CONFIG"
 
   delete-channel:
     name: Delete channel
