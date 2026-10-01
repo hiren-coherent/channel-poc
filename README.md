@@ -48,13 +48,15 @@ shows which channel it used.
    [src/App.tsx](src/App.tsx), push. Run the workflow from `feature/SP-101-hello` with
    the channel name blank. You get channel `SP-101` (the Jira key; a branch without one
    uses its last path segment). Open the site and pick `SP-101` in the switcher.
-2. **Update.** Push another change and run again with the name blank. The branch already
-   has `SP-101`, so that channel is updated.
+2. **Update.** Push another change and run again. The branch already has `SP-101`, so
+   that channel is updated, even if you type a different channel name (the run warns
+   that it ignored it). One branch has one channel.
 3. **Ownership guard.** From `feature/SP-101-other`, run with the name blank: it fails,
    because `SP-101` belongs to `feature/SP-101-hello`. Set another channel name instead.
-4. **Custom name and config.** Run with channel name `demo`. A new channel gets a copy of
-   `development/config.json` (see the *Runtime config* card). Edit `demo/config.json` on
-   `gh-pages` and deploy again: an update keeps the channel's own config.
+4. **Custom name and config.** From a branch with no channel yet, run with channel name
+   `demo`. A new channel gets a copy of `development/config.json` (see the *Runtime
+   config* card). Edit `demo/config.json` on `gh-pages` and deploy again: an update keeps
+   the channel's own config.
 5. **Delete.** `git push origin --delete feature/SP-101-hello`, or delete the branch on
    GitHub. Channel Management runs by itself and removes the branch's channels and their
    registry entries. Deleting the branch is the only way to delete a channel.

@@ -105,13 +105,19 @@ deploy_default() { # <dist>
   cp -r "$ROOT/pages-root/." .
 }
 
-# A channel belongs to the branch that first deployed it. The check runs on every
-# attempt, against the tip being pushed onto, so two runs can't both claim one channel.
+# One channel per branch, and a channel belongs to the branch that first deployed it.
+# Both checks run on every attempt, against the tip being pushed onto, so two runs
+# can't claim one channel or give one branch two channels.
 deploy_channel() { # <channel> <branch> <dist>
-  local channel="$1" branch="$2" dist="$3" owner new_channel=false
+  local channel="$1" branch="$2" dist="$3" owner existing new_channel=false
   owner=$(node "$REGISTRY_JS" --file=channel.json --op=owner --name="$channel")
   if [[ -n "$owner" && "$owner" != "$branch" ]]; then
     echo "::error::Channel '$channel' belongs to branch '$owner'. Set another channel_name." >&2
+    exit 1
+  fi
+  existing=$(node "$REGISTRY_JS" --file=channel.json --op=find --branch="$branch")
+  if [[ -n "$existing" && "$existing" != "$channel" ]]; then
+    echo "::error::Branch '$branch' already deploys to channel '$existing'." >&2
     exit 1
   fi
   [[ -d "$channel" ]] || new_channel=true

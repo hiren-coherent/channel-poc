@@ -8,12 +8,13 @@ name: Channel Management
 # deployed from — [{ "channel_name": "SP-12345", "branch_name": "feat/SP-12345-foo" }].
 # The channel switcher reads it.
 #
-#   Run workflow  → deploys the branch picked in "Use workflow from". With channel_name
-#                   blank it updates the channel already registered to that branch, or
-#                   creates one named from the branch (its Jira key, else its last path
-#                   segment). A channel registered to another branch is never taken over.
-#                   A new channel gets a copy of development's config.json; an update
-#                   keeps the channel's own.
+#   Run workflow  → deploys the branch picked in "Use workflow from". One channel per
+#                   branch: once the branch has a channel, every run updates it and any
+#                   channel_name typed is ignored. On the branch's first deploy the channel
+#                   is channel_name, or if blank is named from the branch (its Jira key,
+#                   else its last path segment). A channel registered to another branch is
+#                   never taken over. A new channel gets a copy of development's
+#                   config.json; an update keeps the channel's own.
 #   Delete branch → deletes the channels registered to it (the `delete` trigger below).
 
 run-name: >-
@@ -26,8 +27,8 @@ on:
     inputs:
       channel_name:
         description: >-
-          Channel name. Leave blank to use this branch's channel, or to name a new one from the
-          branch (feat/SP-12345-foo → SP-12345). Otherwise 1-20 chars of [A-Za-z0-9_-]
+          Channel name, used only on this branch's first deploy (later runs always update the same
+          channel). Blank: named from the branch (feat/SP-12345-foo → SP-12345). 1-20 chars of [A-Za-z0-9_-]
         required: false
         type: string
   # GitHub runs `delete` workflows from the default branch only, so this trigger
@@ -82,22 +83,25 @@ jobs:
               echo "No channel is registered to deleted branch '$BRANCH'; nothing to delete."
             fi
           else
-            if [[ -n "$CHANNEL" ]]; then
+            # One channel per branch: a branch that already has one always updates it.
+            CHANNELS=$(registry --op=find --branch="$BRANCH")
+            if [[ -n "$CHANNELS" ]]; then
+              if [[ -n "$CHANNEL" && "$CHANNEL" != "$CHANNELS" ]]; then
+                echo "::warning::Ignoring channel_name '$CHANNEL': branch '$BRANCH' already deploys to '$(echo $CHANNELS)', so that channel is updated."
+              fi
+            elif [[ -n "$CHANNEL" ]]; then
               CHANNELS="$CHANNEL"
             else
-              CHANNELS=$(registry --op=find --branch="$BRANCH")
-              if [[ -z "$CHANNELS" ]]; then
-                if [[ "$BRANCH" =~ [A-Z][A-Z0-9]+-[0-9]+ ]]; then
-                  CHANNELS="${BASH_REMATCH[0]}"
-                else
-                  CHANNELS="${BRANCH##*/}"
-                fi
-                CHANNELS="${CHANNELS//[^A-Za-z0-9_-]/-}"
-                CHANNELS="${CHANNELS:0:20}"
+              if [[ "$BRANCH" =~ [A-Z][A-Z0-9]+-[0-9]+ ]]; then
+                CHANNELS="${BASH_REMATCH[0]}"
+              else
+                CHANNELS="${BRANCH##*/}"
               fi
+              CHANNELS="${CHANNELS//[^A-Za-z0-9_-]/-}"
+              CHANNELS="${CHANNELS:0:20}"
             fi
             if [[ $(wc -w <<< "$CHANNELS") -ne 1 ]]; then
-              echo "::error::Expected one channel but got: $(echo $CHANNELS). Set channel_name to a single channel."
+              echo "::error::Expected one channel but got: $(echo $CHANNELS)."
               exit 1
             fi
           fi
