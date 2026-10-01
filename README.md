@@ -52,8 +52,9 @@ shows which channel it used.
    has `SP-101`, so that channel is updated.
 3. **Ownership guard.** From `feature/SP-101-other`, run with the name blank: it fails,
    because `SP-101` belongs to `feature/SP-101-hello`. Set another channel name instead.
-4. **Custom name and config.** Run with channel name `demo` and *copy_config* unticked.
-   Its *Runtime config* card says there is no `config.json`.
+4. **Custom name and config.** Run with channel name `demo`. A new channel gets a copy of
+   `development/config.json` (see the *Runtime config* card). Edit `demo/config.json` on
+   `gh-pages` and deploy again: an update keeps the channel's own config.
 5. **Delete.** `git push origin --delete feature/SP-101-hello`, or delete the branch on
    GitHub. Channel Management runs by itself and removes the branch's channels and their
    registry entries. Deleting the branch is the only way to delete a channel.
