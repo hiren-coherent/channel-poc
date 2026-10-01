@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Channel router</title>
+    <script>
+      // Stand-in for platform-ui's CloudFront channel router (channel_router.js): read the
+      // `channel` cookie, fall back to the default channel, and go to that channel's folder.
+      // CloudFront rewrites the request instead, so there the channel never shows in the URL.
+      var DEFAULT_CHANNEL = 'development';
+      var CHANNEL_REGEX = /^[A-Za-z0-9_-]{1,20}$/;
+      var match = document.cookie.match(/(?:^|;\s*)channel=([^;]+)/);
+      var channel = match && CHANNEL_REGEX.test(match[1]) ? match[1] : DEFAULT_CHANNEL;
+      // ?v= skips the browser's copy of the channel's index.html: GitHub Pages lets browsers
+      // cache it for 10 minutes, which would hide a deploy that just finished.
+      location.replace('./' + channel + '/?v=' + Date.now());
+    </script>
+  </head>
+  <body></body>
+</html>

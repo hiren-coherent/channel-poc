@@ -1,0 +1,187 @@
+name: Channel Management
+
+# Same flow as platform-ui's channel-build.yml, with the gh-pages branch standing in
+# for the S3 bucket (see scripts/pages.sh). A "channel" is a folder on gh-pages; the
+# router page at the site root sends you to the folder named by the `channel` cookie.
+#
+# Registry: channel.json at the site root records which branch each channel was
+# deployed from — [{ "channel_name": "SP-12345", "branch_name": "feat/SP-12345-foo" }].
+# The channel switcher reads it, and deleting a branch deletes the channels registered
+# to it (the `delete` trigger below).
+#
+# Manual runs use the branch picked in "Use workflow from". A blank channel_name means:
+#   create        → derived from that branch (its Jira key, else its last path segment)
+#   update/delete → the channel(s) already registered to that branch
+
+run-name: >-
+  ${{ github.event_name == 'delete'
+    && format('Delete channels of deleted branch {0}', github.event.ref)
+    || format('{0} channel {1} from {2}', inputs.action, inputs.channel_name || '(auto)', github.ref_name) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - create
+          - update
+          - delete
+      channel_name:
+        description: >-
+          Channel name. Leave blank: create → derived from the branch (feat/SP-12345-foo → SP-12345);
+          update/delete → the channel registered to the branch. Otherwise 1-20 chars of [A-Za-z0-9_-]
+        required: false
+        type: string
+      copy_config:
+        description: 'Copy config.json from the development channel (create/update only)'
+        required: false
+        type: boolean
+        default: true
+  # GitHub runs `delete` workflows from the default branch only, so this trigger
+  # takes effect once this file is on main.
+  delete:
+
+# No workflow-level concurrency group: a group keeps one pending run and cancels the
+# rest, so frequent branch deletions would cancel queued manual runs. pages.sh makes
+# every change a single push that is redone if another run published first.
+
+permissions:
+  contents: read
+
+env:
+  # Deployed by deploy-development.yml; protected from this workflow.
+  DEV_CHANNEL_NAME: development
+
+jobs:
+  resolve:
+    name: Resolve channel
+    # Tag deletions fire `delete` too; only branches have channels.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.ref_type == 'branch' }}
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.resolve.outputs.action }}
+      branch: ${{ steps.resolve.outputs.branch }}
+      channels: ${{ steps.resolve.outputs.channels }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Resolve action, branch and channel
+        id: resolve
+        shell: bash
+        env:
+          # Passed through env, never ${{ }} inside the script: branch names and
+          # inputs are user-controlled and would otherwise be shell-injected.
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ inputs.action }}
+          CHANNEL: ${{ inputs.channel_name }}
+          # On `delete` the run is on the default branch; the deleted branch is event.ref.
+          BRANCH: ${{ github.event_name == 'delete' && github.event.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          set -f # channel lists are word-split below; never glob them
+          if [[ "$EVENT" == delete ]]; then ACTION=delete; fi
+
+          if [[ -n "$CHANNEL" ]]; then
+            CHANNELS="$CHANNEL"
+          elif [[ "$ACTION" == create ]]; then
+            if [[ "$BRANCH" =~ [A-Z][A-Z0-9]+-[0-9]+ ]]; then
+              CHANNELS="${BASH_REMATCH[0]}"
+            else
+              CHANNELS="${BRANCH##*/}"
+            fi
+            CHANNELS="${CHANNELS//[^A-Za-z0-9_-]/-}"
+            CHANNELS="${CHANNELS:0:20}"
+          else
+            CHANNELS=$(bash scripts/pages.sh read --op=find --branch="$BRANCH")
+          fi
+
+          COUNT=$(wc -w <<< "$CHANNELS")
+          if [[ "$COUNT" -eq 0 ]]; then
+            if [[ "$EVENT" != delete ]]; then
+              echo "::error::No channel is registered to branch '$BRANCH'. Set channel_name, or use create for a new channel."
+              exit 1
+            fi
+            echo "No channel is registered to deleted branch '$BRANCH'; nothing to delete."
+          elif [[ "$COUNT" -gt 1 && ( -n "$CHANNEL" || "$ACTION" != delete ) ]]; then
+            echo "::error::Expected one channel but got: $(echo $CHANNELS). Set channel_name to a single channel."
+            exit 1
+          fi
+          JSON=""
+          for C in $CHANNELS; do
+            if [[ ! "$C" =~ ^[A-Za-z0-9_-]{1,20}$ ]]; then
+              echo "::error::Channel '$C' must match ^[A-Za-z0-9_-]{1,20}\$ (mirrors the router's validation)"
+              exit 1
+            fi
+            if [[ "$C" == "$DEV_CHANNEL_NAME" ]]; then
+              echo "::error::Cannot manage the protected '$DEV_CHANNEL_NAME' channel via this workflow (deploy-development.yml deploys it)"
+              exit 1
+            fi
+            JSON+="\"$C\"," # safe to quote raw: the regex above admits no JSON-special characters
+          done
+
+          echo "$ACTION: [$(echo $CHANNELS)] for branch $BRANCH" | tee -a "$GITHUB_STEP_SUMMARY"
+          {
+            echo "action=$ACTION"
+            echo "branch=$BRANCH"
+            echo "channels=[${JSON%,}]"
+          } >> "$GITHUB_OUTPUT"
+
+  build-and-deploy:
+    name: Build & deploy channel
+    needs: [resolve]
+    if: ${{ needs.resolve.outputs.action == 'create' || needs.resolve.outputs.action == 'update' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      ACTION: ${{ needs.resolve.outputs.action }}
+      BRANCH: ${{ needs.resolve.outputs.branch }}
+      CHANNEL: ${{ fromJSON(needs.resolve.outputs.channels)[0] }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        env:
+          VITE_CHANNEL: ${{ env.CHANNEL }}
+          VITE_BRANCH: ${{ env.BRANCH }}
+          VITE_COMMIT: ${{ github.sha }}
+        run: VITE_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" pnpm build
+
+      - name: Publish channel and register it in channel.json
+        env:
+          COPY_CONFIG: ${{ inputs.copy_config }}
+        run: bash scripts/pages.sh deploy "$ACTION" "$CHANNEL" "$BRANCH" dist "$COPY_CONFIG"
+
+  delete-channel:
+    name: Delete channel
+    needs: [resolve]
+    if: ${{ needs.resolve.outputs.action == 'delete' && needs.resolve.outputs.channels != '[]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Delete channel folders and unregister them
+        env:
+          CHANNELS: ${{ join(fromJSON(needs.resolve.outputs.channels), ' ') }}
+        # Word-split on purpose: names were validated against [A-Za-z0-9_-] in resolve.
+        run: bash scripts/pages.sh delete $CHANNELS

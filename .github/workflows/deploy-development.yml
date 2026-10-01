@@ -1,0 +1,46 @@
+name: Deploy development
+
+# Stand-in for platform-ui's deploy-dev.yml: every push to main rebuilds the default
+# `development` channel, and also publishes the router pages at the site root.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: Build & deploy development
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        env:
+          VITE_CHANNEL: development
+          VITE_BRANCH: ${{ github.ref_name }}
+          VITE_COMMIT: ${{ github.sha }}
+        run: VITE_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" pnpm build
+
+      - name: Publish to gh-pages
+        run: bash scripts/pages.sh deploy-default dist
